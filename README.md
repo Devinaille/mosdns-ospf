@@ -46,6 +46,29 @@ docker 镜像: [docker hub](https://hub.docker.com/r/irinesistiana/mosdns)
       ipPoolSaveFile: "/var/lib/mosdns/ospf_ip_pool.json"
       ipPoolSaveInterval: 60
 
+      # 可选：向远程路由器推送临时主机路由（方案A，用于加速路由可达性）
+      # routerType: 指定路由器类型，目前支持 `routeros`（MikroTik RouterOS）。
+      # routerOS: 当 routerType==routeros 时使用，包含管理连接信息和添加路由时使用的 gateway。
+      # 支持两种 SSH 认证方式：私钥（优先）或密码。
+      # 例：使用密码认证
+      # routerType: routeros
+      # routerOS:
+      #   host: 192.0.2.254
+      #   port: 22
+      #   user: admin
+      #   password: yourpassword
+      #   gateway: 10.0.0.254
+      #
+      # 例：使用私钥认证（优先）
+      # routerType: routeros
+      # routerOS:
+      #   host: 192.0.2.254
+      #   port: 22
+      #   user: admin
+      #   privateKey: /root/.ssh/id_rsa
+      #   privateKeyPassphrase: "" # 若私钥有口令则填写
+      #   gateway: 10.0.0.254
+
   - tag: remote_sequence
     type: sequence
     args:
