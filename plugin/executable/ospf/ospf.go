@@ -24,6 +24,14 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/netip"
+	"os"
+	"strings"
+	"time"
+
 	"github.com/IrineSistiana/mosdns/v5/coremain"
 	"github.com/IrineSistiana/mosdns/v5/pkg/matcher/netlist"
 	"github.com/IrineSistiana/mosdns/v5/pkg/ospf_cnn"
@@ -34,13 +42,6 @@ import (
 	"github.com/miekg/dns"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-	"io"
-	"net"
-	"net/http"
-	"net/netip"
-	"os"
-	"strings"
-	"time"
 )
 
 const PluginType = "ospf"
@@ -76,6 +77,9 @@ type Args struct {
 	RouterId        string                `yaml:"routerId"`
 	PersistentRoute PersistentRouteConfig `yaml:"persistentRoute"`
 	Calls           []CallConfig          `yaml:"init-calls"`
+	// ip pool persistence
+	IpPoolSaveFile     string `yaml:"ipPoolSaveFile"`
+	IpPoolSaveInterval uint   `yaml:"ipPoolSaveInterval"`
 }
 
 var _ sequence.Executable = (*OSPF)(nil)
@@ -166,7 +170,7 @@ func Init(b *coremain.BP, args any) (any, error) {
 		router.AnnounceASBRRoute(allCIDRs)
 	}
 
-	ipPool := NewIpPool(arg.Ttl, router, b.L())
+	ipPool := NewIpPool(arg.Ttl, router, b.L(), arg.IpPoolSaveFile, arg.IpPoolSaveInterval)
 	ipPool.Init()
 
 	o := &OSPF{
