@@ -80,6 +80,24 @@ type Args struct {
 	// ip pool persistence
 	IpPoolSaveFile     string `yaml:"ipPoolSaveFile"`
 	IpPoolSaveInterval uint   `yaml:"ipPoolSaveInterval"`
+	// optional router push configuration
+	RouterType string       `yaml:"routerType"`
+	RouterOS   RouterOSArgs `yaml:"routerOS"`
+}
+
+// RouterOSArgs holds RouterOS management connection details used when
+// routerType == "routeros" so mosdns can push temporary static routes.
+type RouterOSArgs struct {
+	Host     string `yaml:"host"`
+	Port     int    `yaml:"port"`
+	User     string `yaml:"user"`
+	Password string `yaml:"password"`
+	// PrivateKey is the path to an SSH private key file for key-based auth.
+	PrivateKey string `yaml:"privateKey"`
+	// PrivateKeyPassphrase is an optional passphrase for the private key file.
+	PrivateKeyPassphrase string `yaml:"privateKeyPassphrase"`
+	// Gateway to use when adding host route on RouterOS. Required for routeros type.
+	Gateway string `yaml:"gateway"`
 }
 
 var _ sequence.Executable = (*OSPF)(nil)
@@ -170,7 +188,9 @@ func Init(b *coremain.BP, args any) (any, error) {
 		router.AnnounceASBRRoute(allCIDRs)
 	}
 
-	ipPool := NewIpPool(arg.Ttl, router, b.L(), arg.IpPoolSaveFile, arg.IpPoolSaveInterval)
+	// create IpPool and pass optional router integration config (routerType/routerOS)
+	// NOTE: by default routerType is empty (no remote push)
+	ipPool := NewIpPool(arg.Ttl, router, b.L(), arg.RouterType, &arg.RouterOS, arg.IpPoolSaveFile, arg.IpPoolSaveInterval)
 	ipPool.Init()
 
 	o := &OSPF{

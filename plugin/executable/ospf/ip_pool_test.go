@@ -24,7 +24,7 @@ func TestSaveAndLoadIpPool(t *testing.T) {
 	router := &mockRouter{}
 	logger := zap.NewNop()
 	// Use long TTL so entry is still valid when loading
-	p := NewIpPool(3600, router, logger, path, 0)
+	p := NewIpPool(3600, router, logger, "", nil, path, 0)
 
 	ip := net.IPNet{IP: net.ParseIP("10.0.0.1"), Mask: net.CIDRMask(32, 32)}
 	p.AddIps("example.com", []net.IPNet{ip})
@@ -40,7 +40,7 @@ func TestSaveAndLoadIpPool(t *testing.T) {
 
 	// load into new pool with mock router
 	router2 := &mockRouter{}
-	p2 := NewIpPool(3600, router2, logger, path, 0)
+	p2 := NewIpPool(3600, router2, logger, "", nil, path, 0)
 	if err := p2.LoadFromFile(path); err != nil {
 		t.Fatalf("load failed: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestLoadIgnoresExpiredEntries(t *testing.T) {
 	}
 
 	router := &mockRouter{}
-	p := NewIpPool(3600, router, zap.NewNop(), path, 0)
+	p := NewIpPool(3600, router, zap.NewNop(), "", nil, path, 0)
 	if err := p.LoadFromFile(path); err != nil {
 		t.Fatalf("load failed: %v", err)
 	}

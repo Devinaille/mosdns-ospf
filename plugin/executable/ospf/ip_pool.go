@@ -3,6 +3,7 @@ package ospf
 import (
 	"container/heap"
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	"golang.org/x/crypto/ssh"
 )
 
 // IpEntry represents an IP address along with its expiration time.
@@ -62,6 +64,9 @@ type IpPool struct {
 	// persistence
 	saveFile     string
 	saveInterval time.Duration
+	// optional remote router integration
+	routerType string
+	routerOS   *RouterOSArgs
 }
 
 // NewIpPool creates a new IpPool with the given TTL and router.
@@ -69,7 +74,7 @@ type IpPool struct {
 func NewIpPool(ttl uint, router interface {
 	AnnounceASBRRoute([]net.IPNet)
 	RevokeASBRRoute([]net.IPNet)
-}, logger *zap.Logger, saveFile string, saveIntervalSec uint) *IpPool {
+}, logger *zap.Logger, routerType string, routerOS *RouterOSArgs, saveFile string, saveIntervalSec uint) *IpPool {
 	return &IpPool{
 		ttl:          time.Duration(ttl) * time.Second,
 		pool:         make(map[string]map[string]*IpEntry),
@@ -78,6 +83,8 @@ func NewIpPool(ttl uint, router interface {
 		logger:       logger,
 		saveFile:     saveFile,
 		saveInterval: time.Duration(saveIntervalSec) * time.Second,
+		routerType:   routerType,
+		routerOS:     routerOS,
 	}
 }
 
@@ -110,6 +117,14 @@ func (r *IpPool) AddIps(domain string, ips []net.IPNet) {
 			r.pool[domain][ipStr] = newEntry
 			heap.Push(&r.pq, newEntry)
 			r.logger.Info("Added new IP to pool", zap.String("domain", domain), zap.String("ip", ipStr), zap.Time("expiration", expirationTime))
+			// If configured, push a temporary host route to RouterOS immediately
+			if r.routerType == "routeros" && r.routerOS != nil && r.routerOS.Host != "" && r.routerOS.Gateway != "" {
+				if err := r.pushRouteToRouterOS(ip, domain); err != nil {
+					r.logger.Error("failed to push route to routeros", zap.String("ip", ipStr), zap.String("domain", domain), zap.Error(err))
+				} else {
+					r.logger.Info("pushed route to routeros", zap.String("ip", ipStr), zap.String("domain", domain))
+				}
+			}
 		}
 	}
 }
@@ -268,6 +283,127 @@ func (r *IpPool) loadFromFile(path string) error {
 		r.logger.Info("restored ip pool and announced routes", zap.Int("count", len(toAnnounce)), zap.String("file", path))
 	}
 
+	return nil
+}
+
+// pushRouteToRouterOS connects to RouterOS via SSH and adds a host route with a comment
+func (r *IpPool) pushRouteToRouterOS(ip net.IPNet, domain string) error {
+	if r.routerOS == nil {
+		return nil
+	}
+	host := r.routerOS.Host
+	port := r.routerOS.Port
+	if port == 0 {
+		port = 22
+	}
+	addr := fmt.Sprintf("%s:%d", host, port)
+	// build auth methods: prefer private key if provided, otherwise password
+	var auths []ssh.AuthMethod
+	if r.routerOS.PrivateKey != "" {
+		keyBytes, err := os.ReadFile(r.routerOS.PrivateKey)
+		if err != nil {
+			return err
+		}
+		var signer ssh.Signer
+		if r.routerOS.PrivateKeyPassphrase != "" {
+			signer, err = ssh.ParsePrivateKeyWithPassphrase(keyBytes, []byte(r.routerOS.PrivateKeyPassphrase))
+			if err != nil {
+				return err
+			}
+		} else {
+			signer, err = ssh.ParsePrivateKey(keyBytes)
+			if err != nil {
+				return err
+			}
+		}
+		auths = append(auths, ssh.PublicKeys(signer))
+	}
+	if len(auths) == 0 && r.routerOS.Password != "" {
+		auths = append(auths, ssh.Password(r.routerOS.Password))
+	}
+
+	cfg := &ssh.ClientConfig{
+		User:            r.routerOS.User,
+		Auth:            auths,
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         5 * time.Second,
+	}
+	client, err := ssh.Dial("tcp", addr, cfg)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	session, err := client.NewSession()
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+	// comment format: mosdns:domain:ip
+	cmd := fmt.Sprintf("/ip route add dst-address=%s gateway=%s comment=\"mosdns:%s:%s\" disabled=no", ip.String(), r.routerOS.Gateway, domain, ip.String())
+	if err := session.Run(cmd); err != nil {
+		return err
+	}
+	return nil
+}
+
+// delRouteFromRouterOS removes a route previously added by pushRouteToRouterOS
+func (r *IpPool) delRouteFromRouterOS(ip net.IPNet, domain string) error {
+	if r.routerOS == nil {
+		return nil
+	}
+	host := r.routerOS.Host
+	port := r.routerOS.Port
+	if port == 0 {
+		port = 22
+	}
+	addr := fmt.Sprintf("%s:%d", host, port)
+	// build auth methods: prefer private key if provided, otherwise password
+	var auths []ssh.AuthMethod
+	if r.routerOS.PrivateKey != "" {
+		keyBytes, err := os.ReadFile(r.routerOS.PrivateKey)
+		if err != nil {
+			return err
+		}
+		var signer ssh.Signer
+		if r.routerOS.PrivateKeyPassphrase != "" {
+			signer, err = ssh.ParsePrivateKeyWithPassphrase(keyBytes, []byte(r.routerOS.PrivateKeyPassphrase))
+			if err != nil {
+				return err
+			}
+		} else {
+			signer, err = ssh.ParsePrivateKey(keyBytes)
+			if err != nil {
+				return err
+			}
+		}
+		auths = append(auths, ssh.PublicKeys(signer))
+	}
+	if len(auths) == 0 && r.routerOS.Password != "" {
+		auths = append(auths, ssh.Password(r.routerOS.Password))
+	}
+
+	cfg := &ssh.ClientConfig{
+		User:            r.routerOS.User,
+		Auth:            auths,
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         5 * time.Second,
+	}
+	client, err := ssh.Dial("tcp", addr, cfg)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	session, err := client.NewSession()
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+	// find by comment and remove
+	find := fmt.Sprintf("mosdns:%s:%s", domain, ip.String())
+	cmd := fmt.Sprintf("/ip route remove [find comment=\"%s\"]", find)
+	if err := session.Run(cmd); err != nil {
+		return err
+	}
 	return nil
 }
 
