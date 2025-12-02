@@ -38,6 +38,14 @@ docker 镜像: [docker hub](https://hub.docker.com/r/irinesistiana/mosdns)
         - url: http://172.16.2.80:8796/restart
           method: GET
 
+      # IpPool 持久化配置（可选）
+      # 将动态学习到的 domain -> ip 池周期性保存到本地文件，并在启动时从该文件恢复。
+      # 如果不设置或留空则不会进行持久化。
+      # ipPoolSaveFile: 保存文件路径（JSON 格式），推荐放在 /var/lib/mosdns/ 或配置目录下
+      # ipPoolSaveInterval: 自动保存间隔（秒），设置为 0 表示不启动自动保存
+      ipPoolSaveFile: "/var/lib/mosdns/ospf_ip_pool.json"
+      ipPoolSaveInterval: 60
+
   - tag: remote_sequence
     type: sequence
     args:
@@ -45,6 +53,11 @@ docker 镜像: [docker hub](https://hub.docker.com/r/irinesistiana/mosdns)
       #将解析后的dns结果保存到路由表中
       - exec: $ospf
 ```
+说明：
+- 当在 args 中指定 `ipPoolSaveFile` 时，插件启动会尝试从该文件加载未过期的 ip 条目并向路由器宣布这些路由。
+- `ipPoolSaveInterval` 为自动保存间隔（秒），为 0 或不设置则不自动保存；保存文件采用原子写入（先写 .tmp 再重命名）。
+- 保存格式为 JSON 数组，每个元素包含 {"domain","ip","expiration"}，expiration 为 unix nano 时间戳。
+- 请确保进程有权写入 `ipPoolSaveFile` 指定的目录（例如 `/var/lib/mosdns/`），否则会在日志中记录错误但不会阻塞启动。
 ### 注意项
 1. 如果RouterId为非本机IP，需要对应的RouterId路由在ospf邻居列表中，我的另一个项目可以简单的添加ospf邻居https://github.com/SvenShi/ospf-neighbor
 2. 当前版本仅简单使用版，可能有未知问题
